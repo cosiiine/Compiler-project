@@ -23,4 +23,4 @@ ll3: test3.ll
 	/usr/lib/llvm-10/bin/lli test3.ll
 
 clean:
-	rm *.class myCompilerParser.java myCompilerLexer.java myCompiler.tokens
+	rm *.class myCompilerParser.java myCompilerLexer.java myCompiler.tokens *.ll
