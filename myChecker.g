@@ -17,7 +17,7 @@ options {
 		Char,
 		String,
 		Short,
-        Int,
+		Int,
 		Long,
 		Float,
 		Signed,

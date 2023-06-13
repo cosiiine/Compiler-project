@@ -1,7 +1,7 @@
 grammar myCompiler;
 
 options {
-   language = Java;
+    language = Java;
 }
 
 @header {
@@ -14,26 +14,39 @@ options {
     boolean TRACEON = false;
 
     // Type information.
-    public enum Type{
-       ERR, BOOL, INT, FLOAT, CHAR, CONST_INT;
-    }
+    public enum Type {
+        // Const_Int,
+        Void,
+        Char,
+        String,
+        Short,
+        Int,
+        Long,
+        Float,
+        Signed,
+        Unsigned,
+        Bool,
+        Unknown,
+        NoExist,
+        Error
+   }
 
-    // This structure is used to record the information of a variable or a constant.
-    class tVar {
-	   int   varIndex; // temporary variable's index. Ex: t1, t2, ..., etc.
-	   int   iValue;   // value of constant integer. Ex: 123.
-	   float fValue;   // value of constant floating point. Ex: 2.314.
+	// This structure is used to record the information of a variable or a constant.
+	class tVar {
+		int   varIndex; // temporary variable's index. Ex: t1, t2, ..., etc.
+		int   iValue;   // value of constant integer. Ex: 123.
+		float fValue;   // value of constant floating point. Ex: 2.314.
 	};
 
-    class Info {
-       Type theType;  // type information.
-       tVar theVar;
-	   
-	   Info() {
-          theType = Type.ERR;
-		  theVar = new tVar();
-	   }
-    };
+	class Info {
+		Type theType;  // type information.
+		tVar theVar;
+		
+		Info() {
+            theType = Type.ERR;
+            theVar = new tVar();
+		}
+	};
 
 	
     // ============================================
@@ -48,7 +61,25 @@ options {
 	//    - fValue: value of floating-point constant.
     // ============================================
 
-    HashMap<String, Info> symtab = new HashMap<String, Info>();
+    // HashMap<String, Info> symtab = new HashMap<String, Info>();
+	public class Env {
+		private HashMap<String, Info> table;
+		protected Env prev;
+
+		public Env(Env p) {
+			table = new HashMap<String, Info>();
+			prev = p;
+		}
+		public void put(String s, Info info) {
+			table.put(s, info);
+		}
+		public Symbol get(String s) {
+			for (Env e = this; e != null; e = e.prev) {
+				Symbol found = (Symbol)(e.table.get(s));
+				if (found != null) return found;
+			}
+		}
+	}
 
     // labelCount is used to represent temporary label.
     // The first index is 0.
@@ -65,45 +96,41 @@ options {
     /*
      * Output prologue.
      */
-    void prologue()
-    {
-       TextCode.add("; === prologue ====");
-       TextCode.add("declare dso_local i32 @printf(i8*, ...)\n");
-	   TextCode.add("define dso_local i32 @main()");
-	   TextCode.add("{");
-    }
+	void prologue() {
+		TextCode.add("; === prologue ====");
+		TextCode.add("declare dso_local i32 @printf(i8*, ...)\n");
+		TextCode.add("define dso_local i32 @main()");
+		TextCode.add("{");
+	}
     
 	
     /*
      * Output epilogue.
      */
-    void epilogue()
-    {
-       /* handle epilogue */
-       TextCode.add("\n; === epilogue ===");
-	   TextCode.add("ret i32 0");
-       TextCode.add("}");
+    void epilogue() {
+		/* handle epilogue */
+		TextCode.add("\n; === epilogue ===");
+		TextCode.add("ret i32 0");
+		TextCode.add("}");
     }
     
     
     /* Generate a new label */
-    String newLabel()
-    {
-       labelCount ++;
-       return (new String("L")) + Integer.toString(labelCount);
+    String newLabel() {
+		labelCount ++;
+		return (new String("L")) + Integer.toString(labelCount);
     } 
     
     
-    public List<String> getTextCode()
-    {
-       return TextCode;
+    public List<String> getTextCode() {
+       	return TextCode;
     }
 }
 
 program: VOID MAIN '(' ')'
         {
-           /* Output function prologue */
-           prologue();
+			/* Output function prologue */
+			prologue();
         }
 
         '{' 

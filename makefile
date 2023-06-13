@@ -21,6 +21,18 @@ ll2: test2.ll
 	/usr/lib/llvm-10/bin/lli test2.ll
 ll3: test3.ll
 	/usr/lib/llvm-10/bin/lli test3.ll
+s0: test0.c
+	clang -S -emit-llvm test0.c
+	more test0.ll
+s1: test1.c
+	clang -S -emit-llvm test1.c
+	more test1.ll
+s2: test2.c
+	clang -S -emit-llvm test2.c
+	more test2.ll
+s3: test3.c
+	clang -S -emit-llvm test3.c
+	more test3.ll
 
 clean:
 	rm *.class myCompilerParser.java myCompilerLexer.java myCompiler.tokens *.ll
