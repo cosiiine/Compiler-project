@@ -15,11 +15,14 @@ options {
     boolean MAIN = false;
     int labelCount = 0;
     int varCount = 0;
+    int strCount = 0;
     List<String> TextCode = new ArrayList<String>();
     String place = "";
 
+    public List<String> getTextCode() {
+       	return TextCode;
+    }
     public enum Type {
-        // Const_Int,
         Void,
         Char,
         String,
@@ -39,6 +42,7 @@ options {
 		int   iValue;   // value of constant integer. Ex: 123.
 		float fValue;   // value of constant floating point. Ex: 2.314.
         String cValue;  // value of constant string or char.
+        String name;
 	};
 	class Info {
 		Type theType;
@@ -47,28 +51,23 @@ options {
             theType = Type.Error;
             theVar = new tVar();
 		}
+        String getValue() {
+            switch (theType) {
+                case Char:
+                    return theVar.cValue;
+                case Short:
+                case Int:
+                case Signed:
+                case Unsigned:
+                case Long:
+                    return Integer.toString(theVar.iValue);
+                case Float:
+                    return Float.toString(theVar.fValue);
+            }
+            return "";
+        }
 	};
-    String newLabel() {
-		labelCount ++;
-		return (new String("L")) + Integer.toString(labelCount);
-    }
-    public List<String> getTextCode() {
-       	return TextCode;
-    }
-	void prologue() {
-		TextCode.add("; === prologue ====");
-		TextCode.add("declare dso_local i32 @printf(i8*, ...)\n");
-		TextCode.add("define dso_local i32 @main()");
-		TextCode.add("{");
-	}
-    void epilogue() {
-		/* handle epilogue */
-		TextCode.add("\n; === epilogue ===");
-		TextCode.add("ret i32 0");
-		TextCode.add("}");
-    }
-	
-	class Env { // HashMap<String, Info> symtab = new HashMap<String, Info>();
+	class Env {
 		private HashMap<String, Info> table;
 		protected Env prev;
 
@@ -76,6 +75,9 @@ options {
 			table = new HashMap<String, Info>();
 			prev = p;
 		}
+        public Info set(String s) {
+            return table.get(s);
+        }
 		public void put(String s, Info info) {
 			table.put(s, info);
 		}
@@ -87,16 +89,64 @@ options {
             return null;
 		}
 	};
+    class VarOfType {
+        protected int align;
+        protected String name;
+        VarOfType(Type type) {
+            switch (type) {
+                case Char:
+                    align = 1;
+                    name = "i8";
+                    break;
+                case Short:
+                    align = 2;
+                    name = "i16";
+                    break;
+                case Int:
+                case Signed:
+                case Unsigned:
+                    align = 4;
+                    name = "i32";
+                    break;
+                case Long:
+                    align = 8;
+                    name = "i64";
+                    break;
+                case Float:
+                    align = 4;
+                    name = "float";
+                    break;
+                
+                default:
+                    break;
+            }
+        }
+    }
+    String newLabel() {
+		labelCount ++;
+		return (new String("L")) + Integer.toString(labelCount);
+    }
+	
     Env top = new Env(null), saved;
-    void declare(String text, Type type, int line) {
-        if (top.table.get(text) != null) System.out.println("Error! " + line + ": Redeclared identifier.");
+    Info declare(String text, Type type, int line) {
+        if (top.set(text) != null) System.out.println("Error! " + line + ": Redeclared identifier.");
         else {
             Info theEntry = new Info();
             theEntry.theType = type;
-            theEntry.theVar.varIndex = varCount++;
+            if (top.prev == null) {
+                theEntry.theVar.name = "@" + text;
+                theEntry.theVar.varIndex = -1;
+            }
+            else {
+                theEntry.theVar.name = "\%t" + Integer.toString(varCount);
+                theEntry.theVar.varIndex = varCount++;
+            }
             top.put(text, theEntry);
+            return theEntry;
         }
+        return new Info();
     }
+    
 }
 
 /* Start */
@@ -105,6 +155,7 @@ program
         {
 			if (TRACEON) System.out.println("program\t\t\t: external_declaration+");
 			if (!MAIN) System.out.println("Error!: Undefined reference to 'main'.");
+            TextCode.add("declare dso_local i32 @printf(i8*, ...)");
 		}
     ;
 /* Declaration */
@@ -127,18 +178,38 @@ init_declarator_list
     ;
 init_declarator
 [Type attr_type]
-    :   ID  { declare($ID.text, $attr_type, $ID.getLine()); }
-        ('=' initializer
+    :   (   a = ID
             {
-                if ($attr_type != $initializer.theInfo.theType) {
-                    System.out.println("Error! " + $ID.getLine() + ": Type mismatch for the operator = in a declaration.");
+                VarOfType theVar = new VarOfType($attr_type);
+                Info theEntry = declare($a.text, $attr_type, $a.getLine());
+                if (top.prev == null) {
+                    TextCode.add(theEntry.theVar.name + " = common dso_local global " + theVar.name + " 0, align " + theVar.align);
                 } else {
-                    Info theEntry = $initializer.theInfo;
-                    top.put($ID.text, theEntry);
+                    TextCode.add(theEntry.theVar.name + " = alloca " + theVar.name + ", align " + theVar.align);
                 }
             }
-        )?
-        { if (TRACEON) System.out.println("init_declarator\t\t: ID ('=' initializer)?"); }
+        |   b = ID '=' initializer
+            {
+                VarOfType theVar = new VarOfType($attr_type);
+                Info theEntry = declare($b.text, $attr_type, $b.getLine());
+                if (theEntry.theType != Type.Error && $attr_type != $initializer.theInfo.theType) {
+                    System.out.println("Error! " + $b.getLine() + ": Type mismatch for the operator = in a declaration.");
+                } else {
+                    int var = theEntry.theVar.varIndex;
+                    String name = theEntry.theVar.name;
+                    theEntry = $initializer.theInfo;
+                    theEntry.theVar.varIndex = var;
+                    theEntry.theVar.name = name;
+                    top.put($b.text, theEntry);
+                    if (top.prev == null) {
+                        TextCode.add(theEntry.theVar.name + " = dso_local global " + theVar.name + " " + theEntry.getValue() + ", align " + theVar.align);
+                    } else {
+                        TextCode.add(theEntry.theVar.name + " = alloca " + theVar.name + ", align " + theVar.align);
+                        TextCode.add("store " + theVar.name + " " + theEntry.getValue() + ", " + theVar.name + "* " + theEntry.theVar.name+ ", align " + theVar.align);
+                    }
+                }
+            }
+        ) { if (TRACEON) System.out.println("init_declarator\t\t: ID ('=' initializer)?"); }
     ;
 initializer
 returns [Info theInfo]
@@ -155,8 +226,10 @@ function_definition
             saved = top;
             top = new Env(top);
             place = $ID.text;
+            VarOfType theVar = new VarOfType($type.attr_type);
             if (place.equals("main")) MAIN = true;
-            declare($ID.text, $type.attr_type, $ID.getLine());
+            Info theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
+            TextCode.add("define dso_local " + theVar.name + " " + theInfo.theVar.name + "()");////////
 		} '(' parameter_list ')' '{' ( compound )* '}'
 		{	
             top = saved;
@@ -298,15 +371,29 @@ jump_statement
 		}
 	;
 printf_statement
-    :   'printf' '(' LITERAL 
+returns [String call]
+    :   'printf' '(' LITERAL
+        {
+            String str = "[" + $LITERAL.text.length() + " * i8]";
+            TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c" + $LITERAL.text + "\\0A\\00");
+            $call = "\%t" + Integer.toString(varCount) + " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds (" + str + ", " + str + "* @.str." + Integer.toString(strCount) + "i64 0, i64 0)";
+            strCount++; varCount++;
+        }
 		(	',' ID
 			{
-				if (top.get($ID.text) == null) {
+                Info theInfo = top.get($ID.text);
+				if (theInfo == null) {
 					System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
-				}
+				} else {
+                    VarOfType theVar = new VarOfType(theInfo.theType);
+                    call += ", " + theVar.name + " " + theInfo.theVar.name;
+                }
 			}
 		)* ')' ';'
-        { if (TRACEON) System.out.println("printf_statement\t: printf ( LITERAL (, ID)* );"); }
+        {
+            if (TRACEON) System.out.println("printf_statement\t: printf ( LITERAL (, ID)* );");
+            TextCode.add(")" + call);
+        }
     ;
 /* Expression */
 expression
@@ -585,8 +672,8 @@ constant
 returns [Info theInfo]
 @init { theInfo = new Info(); }
     :   DEC_NUM     { if (TRACEON) System.out.println("constant\t\t: DEC_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.parseInt($DEC_NUM.text); }
-    |   OCT_NUM     { if (TRACEON) System.out.println("constant\t\t: OCT_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.cValue = $OCT_NUM.text;  }
-    |   HEX_NUM     { if (TRACEON) System.out.println("constant\t\t: HEX_NUM"); 	$theInfo.theType = Type.Int;    $theInfo.theVar.cValue = $HEX_NUM.text;  }
+    |   OCT_NUM     { if (TRACEON) System.out.println("constant\t\t: OCT_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($OCT_NUM.text, 8);  }
+    |   HEX_NUM     { if (TRACEON) System.out.println("constant\t\t: HEX_NUM"); 	$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($HEX_NUM.text,16);  }
     |   FLOAT_NUM   { if (TRACEON) System.out.println("constant\t\t: FLOAT_NUM");	$theInfo.theType = Type.Float;  $theInfo.theVar.fValue = Float.parseFloat($FLOAT_NUM.text); }
     |   CHAR_VAL    { if (TRACEON) System.out.println("constant\t\t: CHAR_VAL");	$theInfo.theType = Type.Char;   $theInfo.theVar.cValue = $CHAR_VAL.text; }
     |   LITERAL     { if (TRACEON) System.out.println("constant\t\t: LITERAL ");	$theInfo.theType = Type.String; $theInfo.theVar.cValue = $LITERAL.text;  }
