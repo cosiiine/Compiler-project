@@ -66,6 +66,39 @@ options {
             }
             return "";
         }
+        String getType() {
+            switch (theType) {
+                case Char:
+                    return "i8";
+                case Short:
+                    return "i16";
+                case Int:
+                case Signed:
+                case Unsigned:
+                    return "i32";
+                case Long:
+                    return "64";
+                case Float:
+                    return "float";
+            }
+            return "";
+        }
+        int getAlign() {
+            switch (theType) {
+                case Char:
+                    return 1;
+                case Short:
+                    return 2;
+                case Int:
+                case Signed:
+                case Unsigned:
+                case Float:
+                    return 4;
+                case Long:
+                    return 8;
+            }
+            return 0;
+        }
 	};
 	class Env {
 		private HashMap<String, Info> table;
@@ -89,39 +122,6 @@ options {
             return null;
 		}
 	};
-    class VarOfType {
-        protected int align;
-        protected String name;
-        VarOfType(Type type) {
-            switch (type) {
-                case Char:
-                    align = 1;
-                    name = "i8";
-                    break;
-                case Short:
-                    align = 2;
-                    name = "i16";
-                    break;
-                case Int:
-                case Signed:
-                case Unsigned:
-                    align = 4;
-                    name = "i32";
-                    break;
-                case Long:
-                    align = 8;
-                    name = "i64";
-                    break;
-                case Float:
-                    align = 4;
-                    name = "float";
-                    break;
-                
-                default:
-                    break;
-            }
-        }
-    }
     String newLabel() {
 		labelCount ++;
 		return (new String("L")) + Integer.toString(labelCount);
@@ -146,7 +146,6 @@ options {
         }
         return new Info();
     }
-    
 }
 
 /* Start */
@@ -180,17 +179,15 @@ init_declarator
 [Type attr_type]
     :   (   a = ID
             {
-                VarOfType theVar = new VarOfType($attr_type);
                 Info theEntry = declare($a.text, $attr_type, $a.getLine());
                 if (top.prev == null) {
-                    TextCode.add(theEntry.theVar.name + " = common dso_local global " + theVar.name + " 0, align " + theVar.align);
+                    TextCode.add(theEntry.theVar.name + " = common dso_local global " + theEntry.getType() + " 0, align " + theEntry.getAlign());
                 } else {
-                    TextCode.add(theEntry.theVar.name + " = alloca " + theVar.name + ", align " + theVar.align);
+                    TextCode.add(theEntry.theVar.name + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
                 }
             }
         |   b = ID '=' initializer
             {
-                VarOfType theVar = new VarOfType($attr_type);
                 Info theEntry = declare($b.text, $attr_type, $b.getLine());
                 if (theEntry.theType != Type.Error && $attr_type != $initializer.theInfo.theType) {
                     System.out.println("Error! " + $b.getLine() + ": Type mismatch for the operator = in a declaration.");
@@ -202,10 +199,10 @@ init_declarator
                     theEntry.theVar.name = name;
                     top.put($b.text, theEntry);
                     if (top.prev == null) {
-                        TextCode.add(theEntry.theVar.name + " = dso_local global " + theVar.name + " " + theEntry.getValue() + ", align " + theVar.align);
+                        TextCode.add(theEntry.theVar.name + " = dso_local global " + theEntry.getType() + " " + theEntry.getValue() + ", align " + theEntry.getAlign());
                     } else {
-                        TextCode.add(theEntry.theVar.name + " = alloca " + theVar.name + ", align " + theVar.align);
-                        TextCode.add("store " + theVar.name + " " + theEntry.getValue() + ", " + theVar.name + "* " + theEntry.theVar.name+ ", align " + theVar.align);
+                        TextCode.add(theEntry.theVar.name + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
+                        TextCode.add("store " + theEntry.getType() + " " + theEntry.getValue() + ", " + theEntry.getType() + "* " + theEntry.theVar.name+ ", align " + theEntry.getAlign());
                     }
                 }
             }
@@ -221,32 +218,38 @@ returns [Info theInfo]
 	;
 /* Function */
 function_definition
+returns [String define]
     :   type ID
         {
+            varCount = 0;
+            Info theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
+            define = "define dso_local " + theInfo.getType() + " " + theInfo.theVar.name + "(";
+            place = $ID.text;
+            if (place.equals("main")) MAIN = true;
             saved = top;
             top = new Env(top);
-            place = $ID.text;
-            VarOfType theVar = new VarOfType($type.attr_type);
-            if (place.equals("main")) MAIN = true;
-            Info theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
-            TextCode.add("define dso_local " + theVar.name + " " + theInfo.theVar.name + "()");////////
-		} '(' parameter_list ')' '{' ( compound )* '}'
+		} '(' parameter_list ')' { TextCode.add($function_definition.define + $parameter_list.param + ") {"); }
+        '{' ( compound )* '}'
 		{	
             top = saved;
             place = "";
+            TextCode.add("}");
 			if (TRACEON) System.out.println("function_definition\t: type ID '(' parameter_type_list ')' '{' ( compound )* '}'");
 		}
     ;
 parameter_list
-	:   parameter_declaration (',' parameter_declaration )*
+returns [String param]
+	:   a = parameter_declaration       { $param = $a.theInfo.getType() + " " + $a.theInfo.theVar.name; }
+        (',' b = parameter_declaration { $param += ", " + $b.theInfo.getType() + " " + $b.theInfo.theVar.name; })*
         { if (TRACEON) System.out.println("parameter_list\t\t: parameter_declaration (',' parameter_declaration)*"); }
-	|	
+	|	{ $param = ""; }
 	;
 parameter_declaration
+returns [Info theInfo]
 	:   type ID
         {	
 			if (TRACEON) System.out.println("parameter_declaration\t: type ID");
-			declare($ID.text, $type.attr_type, $ID.getLine());
+			$theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
 		}
 	;
 /* Statements */
@@ -376,7 +379,7 @@ returns [String call]
         {
             String str = "[" + $LITERAL.text.length() + " * i8]";
             TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c" + $LITERAL.text + "\\0A\\00");
-            $call = "\%t" + Integer.toString(varCount) + " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds (" + str + ", " + str + "* @.str." + Integer.toString(strCount) + "i64 0, i64 0)";
+            $call = "\%t" + Integer.toString(varCount) + " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds (" + str + ", " + str + "* @.str." + Integer.toString(strCount) + ", i64 0, i64 0)";
             strCount++; varCount++;
         }
 		(	',' ID
@@ -385,14 +388,13 @@ returns [String call]
 				if (theInfo == null) {
 					System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
 				} else {
-                    VarOfType theVar = new VarOfType(theInfo.theType);
-                    call += ", " + theVar.name + " " + theInfo.theVar.name;
+                    call += ", " + theInfo.getType() + " " + theInfo.theVar.name;
                 }
 			}
 		)* ')' ';'
         {
             if (TRACEON) System.out.println("printf_statement\t: printf ( LITERAL (, ID)* );");
-            TextCode.add(")" + call);
+            TextCode.add(call + ")");
         }
     ;
 /* Expression */
