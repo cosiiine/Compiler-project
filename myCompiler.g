@@ -51,7 +51,7 @@ options {
     String newLabel() {
 		labelCount ++;
 		return (new String("L")) + Integer.toString(labelCount);
-    } 
+    }
     public List<String> getTextCode() {
        	return TextCode;
     }
@@ -87,9 +87,9 @@ options {
             return null;
 		}
 	};
-    Env top = null, saved;
+    Env top = new Env(null), saved;
     void declare(String text, Type type, int line) {
-        if (top.get(text) != null) System.out.println("Error! " + line + ": Redeclared identifier.");
+        if (top.table.get(text) != null) System.out.println("Error! " + line + ": Redeclared identifier.");
         else {
             Info theEntry = new Info();
             theEntry.theType = type;
@@ -104,7 +104,7 @@ program
     :   external_declaration+
         {
 			if (TRACEON) System.out.println("program\t\t\t: external_declaration+");
-			if (MAIN) System.out.println("Error!: Undefined reference to 'main'.");
+			if (!MAIN) System.out.println("Error!: Undefined reference to 'main'.");
 		}
     ;
 /* Declaration */
