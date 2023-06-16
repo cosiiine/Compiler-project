@@ -54,10 +54,12 @@ options {
         void set(Type type, int index, String str) {
             theType = type;
             theVar.varIndex = index;
-            if (index < 0) {
+            if (index == -1) {
                 if (type == Type.Float) theVar.fValue = Float.parseFloat(str);
                 else theVar.iValue = Integer.parseInt(str);
-            } else name = str;
+            } else if (index == -2) {
+                name = str;
+            } else name = "\%t" + Integer.toString(index);
         }
         String getValue() {
             if (theType == Type.Error) return "ERR";
@@ -163,9 +165,9 @@ options {
             Info theEntry = new Info();
             theEntry.theType = type;
             if (top.prev == null) {
-                theEntry.set(type, 0, "@" + text);
+                theEntry.set(type, -2, "@" + text);
             } else {
-                theEntry.set(type, varCount, "\%t" + Integer.toString(varCount++));
+                theEntry.set(type, varCount++, "");
             }
             top.put(text, theEntry);
             return theEntry;
@@ -174,14 +176,14 @@ options {
     }
     Info load(Info a) {
         Info theInfo = new Info();
-        theInfo.set(a.theType, varCount, "\%t" + Integer.toString(varCount++));
+        theInfo.set(a.theType, varCount++, "");
         TextCode.add(theInfo.getValue() + " = load " + a.getType() + ", " + a.getType() + "* " + a.getValue() + ", align " + a.getAlign());
         return theInfo;
     }
     Info assign(String op, Info a, Info b) {
         Info theInfo = new Info();
         if (a.getType() != b.getType()) return theInfo;
-        theInfo.set(a.theType, varCount, "\%t" + Integer.toString(varCount++));
+        theInfo.set(a.theType, varCount++, "");
         TextCode.add(theInfo.getValue() + " = " + op + " " + a.getType() + " " + a.getValue() + ", " + b.getValue());
         return theInfo;
     }
@@ -265,7 +267,19 @@ returns [String define]
             if (place.equals("main")) MAIN = true;
             saved = top;
             top = new Env(top);
-		} '(' parameter_list ')' { TextCode.add($function_definition.define + $parameter_list.param + ") {"); }
+		} '(' parameter_list ')'
+        {   
+            for (int i = 0; i < $parameter_list.param.size(); i++) {
+                if (i > 0) define += ", ";
+                define += $parameter_list.param.get(i).getType() + " " + $parameter_list.param.get(i).getValue();
+            }
+            TextCode.add($function_definition.define + ") {");
+            for (int i = 0; i < $parameter_list.param.size(); i++) {
+                Info theInfo = declare($parameter_list.name.get(i), $parameter_list.param.get(i).theType, $parameter_list.start.getLine());
+                TextCode.add(theInfo.getValue() + " = alloca " + theInfo.getType() + ", align " + theInfo.getAlign());
+                store($parameter_list.param.get(i), theInfo);
+            }
+        }
         '{' ( compound )* '}'
 		{	
             top = saved;
@@ -275,18 +289,21 @@ returns [String define]
 		}
     ;
 parameter_list
-returns [String param]
-	:   a = parameter_declaration      { $param = $a.theInfo.getType() + " " + $a.theInfo.getValue(); }
-        (',' b = parameter_declaration { $param += ", " + $b.theInfo.getType() + " " + $b.theInfo.getValue(); })*
+returns [List<Info> param, List<String> name]
+    :   { $param = new ArrayList<Info>(); $name = new ArrayList<String>(); }
+	(   a = parameter_declaration      { $param.add($a.theInfo); $name.add($a.name); }
+        (',' b = parameter_declaration { $param.add($b.theInfo); $name.add($b.name); })*
         { if (TRACEON) System.out.println("parameter_list\t\t: parameter_declaration (',' parameter_declaration)*"); }
-	|	{ $param = ""; }
+	|	)
 	;
 parameter_declaration
-returns [Info theInfo]
+returns [Info theInfo, String name]
 	:   type ID
         {	
 			if (TRACEON) System.out.println("parameter_declaration\t: type ID");
-			$theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
+			$theInfo = new Info();
+            $theInfo.set($type.attr_type, varCount++, "");
+            $name = $ID.text;
 		}
 	;
 /* Statements */
