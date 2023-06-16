@@ -17,6 +17,7 @@ options {
     int varCount = 0;
     int strCount = 0;
     List<String> TextCode = new ArrayList<String>();
+    HashMap<String, List<Info>> function = new HashMap<String, List<Info>>();
     String place = "";
 
     public List<String> getTextCode() {
@@ -203,7 +204,7 @@ program
     :   external_declaration+
         {
 			if (TRACEON) System.out.println("program\t\t\t: external_declaration+");
-			if (!MAIN) System.out.println("Error!: Undefined reference to 'main'.");
+			if (function.get("main") == null) System.out.println("Error!: Undefined reference to 'main'.");
             TextCode.add("declare dso_local i32 @printf(i8*, ...)");
 		}
     ;
@@ -270,11 +271,11 @@ returns [String define]
             Info theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
             define = "define dso_local " + theInfo.getType() + " " + theInfo.getValue() + "(";
             place = $ID.text;
-            if (place.equals("main")) MAIN = true;
             saved = top;
             top = new Env(top);
 		} '(' parameter_list ')'
         {   
+            function.put($ID.text, $parameter_list.param);
             for (int i = 0; i < $parameter_list.param.size(); i++) {
                 if (i > 0) define += ", ";
                 define += $parameter_list.param.get(i).getType() + " " + $parameter_list.param.get(i).getValue();
