@@ -30,6 +30,7 @@ options {
         Int,
         Long,
         Float,
+        Double,
         Signed,
         Unsigned,
         Bool,
@@ -73,6 +74,7 @@ options {
                     case Long:
                         return Integer.toString(theVar.iValue);
                     case Float:
+                    case Double:
                         return String.format("\%.6e", theVar.fValue);
                         // return Integer.toHexString(Float.floatToIntBits(theVar.fValue));
                 }
@@ -95,6 +97,8 @@ options {
                     return "i64";
                 case Float:
                     return "float";
+                case Double:
+                    return "double";
             }
             return "ERR";
         }
@@ -110,6 +114,7 @@ options {
                 case Float:
                     return 4;
                 case Long:
+                case Double:
                     return 8;
             }
             return 0;
@@ -126,6 +131,7 @@ options {
                 case Float:
                     return 4;
                 case Long:
+                case Double:
                     return 8;
             }
             return 0;
@@ -307,9 +313,14 @@ returns [Info theInfo, String name]
 		}
 	;
 /* Statements */
+block
+    :   statement[newLabel()]
+    ;
+
 statement
+[String label]
 returns [String next]
-    :   { $next = newLabel(); }
+    :   { $next = label; }
     (   compound_statement
         { if (TRACEON) System.out.println("statement\t\t: compound_statement"); }
     |   expression_statement
@@ -322,7 +333,7 @@ returns [String next]
         { if (TRACEON) System.out.println("statement\t\t: for_statement"); }
     |   switch_statement
         { if (TRACEON) System.out.println("statement\t\t: switch_statement"); }
-    |   jump_statement
+    |   jump_statement[$next]
         { if (TRACEON) System.out.println("statement\t\t: jump_statement"); }
     |   printf_statement
         { if (TRACEON) System.out.println("statement\t\t: printf_statement"); }
@@ -337,7 +348,7 @@ compound_statement
         { if (TRACEON) System.out.println("compound_statement\t: '{' ( declaration | statement )* '}'"); }
     ;
 compound
-	:	declaration | statement
+	:	declaration | block
 	;
 expression_statement
     :   expression ';'
@@ -354,24 +365,25 @@ returns [String t, String f]
                 $t = newLabel();
                 $f = newLabel();
                 TextCode.add("br i1 " + $expression.theInfo.getValue() + ", label \%" + $t + ", label \%" + $f);
+                TextCode.add("");
                 TextCode.add($t + ":");
             }
-        } statement { TextCode.add("br label \%" + $next); TextCode.add($f + ":"); }
-        (('else') =>  else_statement)? { TextCode.add("br label \%" + $next); }
+        } block { TextCode.add("br label \%" + $next); TextCode.add(""); TextCode.add($f + ":"); }
+        (('else') =>  else_statement)? { TextCode.add("br label \%" + $next); TextCode.add(""); }
         {   
             if (TRACEON) System.out.println("if_statement\t\t: if ( expression ) statement");
             TextCode.add($next + ":");
         }
     ;
 else_statement
-    :   'else' statement
+    :   'else' block
         { if (TRACEON) System.out.println("else_statement\t\t: else statement"); }
     ;
 while_statement
 [String next]
 returns [String l]
-    :   { $l = newLabel(); TextCode.add("br label \%" + $l); TextCode.add($l + ":"); }
-    (   'do' statement 'while' '(' a = expression ')' ';'
+    :   { $l = newLabel(); TextCode.add("br label \%" + $l); TextCode.add($l + ":"); TextCode.add(""); }
+    (   'do' block 'while' '(' a = expression ')' ';'
         {
 			if (TRACEON) System.out.println("while_statement\t\t: do statement while ( expression ) ;");
 			
@@ -379,6 +391,7 @@ returns [String l]
 				System.out.println("Error! " + $while_statement.start.getLine() + ": Type mismatch in a while_statement's condition.");
 			} else {
                 TextCode.add("br i1 " + $a.theInfo.getValue() + ", label \%" + $l + ", label \%" + $next);
+                TextCode.add("");
                 TextCode.add($next + ":");
             }
 		}
@@ -391,24 +404,29 @@ returns [String l]
 			} else {
                 String lb = newLabel();
                 TextCode.add("br i1 " + $b.theInfo.getValue() + ", label \%" + lb + ", label \%" + $next);
+                TextCode.add("");
                 TextCode.add(lb + ":");
             }
-		} statement { TextCode.add("br label \%" + $l); TextCode.add($next + ":"); }
+		} block { TextCode.add("br label \%" + $l); TextCode.add(""); TextCode.add($next + ":"); }
     )
     ;
 for_statement
 [String next]
 returns [String la, String lb, String lc]
     :   { $la = newLabel(); $lb = newLabel(); $lc = newLabel(); }
-        'for' '(' expression_statement { TextCode.add("br label \%" + $la); TextCode.add($la + ":"); }
+        'for' '(' expression_statement { TextCode.add("br label \%" + $la); TextCode.add(""); TextCode.add($la + ":"); }
         a = expression ';'  
         {   
             if ($a.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $for_statement.start.getLine() + ": Type mismatch in a for_statement's condition.");
-			} else TextCode.add("br i1 " + $a.theInfo.getValue() + ", label \%" + $lc + ", label \%" + $next); TextCode.add($lb + ":");
+			} else {
+                TextCode.add("br i1 " + $a.theInfo.getValue() + ", label \%" + $lc + ", label \%" + $next);
+                TextCode.add("");
+                TextCode.add($lb + ":");
+            }
         }
-        expression? ')'     { TextCode.add("br label \%" + $la); TextCode.add($lc + ":"); }
-        statement           { TextCode.add("br label \%" + $lb); TextCode.add($next + ":"); }
+        expression? ')' { TextCode.add("br label \%" + $la); TextCode.add(""); TextCode.add($lc + ":"); }
+        block           { TextCode.add("br label \%" + $lb); TextCode.add(""); TextCode.add($next + ":"); }
         { if (TRACEON) System.out.println("for_statement\t\t: 'for' '(' expression_statement expression ';' expression? ')' statement"); }
     ;
 switch_statement
@@ -417,7 +435,7 @@ switch_statement
     ;
 labeled_statement
 [Type attr_type]
-	:   'case' conditional_expression ':' statement*
+	:   'case' conditional_expression ':' block*
         {
 			if (TRACEON) System.out.println("labeled_statement\t: 'case' conditional_expression ':' statement*");
 			
@@ -425,10 +443,11 @@ labeled_statement
 				System.out.println("Error! " + $labeled_statement.start.getLine() + ": Type mismatch in a labeled_statement.");
 			}
 		}
-	|   'default' ':' statement*
+	|   'default' ':' block*
         { if (TRACEON) System.out.println("labeled_statement\t: 'default' ':' statement*"); }
 	;
 jump_statement
+[String next]
 	:   'goto' ID ';'
 		{
 			if (TRACEON) System.out.println("jump_statement\t\t: goto ID");
@@ -464,8 +483,16 @@ returns [String call]
         }
 		(	',' assignment_expression
 			{
-                if ($assignment_expression.theInfo.theType != Type.Error)
-                    call += ", " + $assignment_expression.theInfo.getType() + " " + $assignment_expression.theInfo.getValue();
+                if ($assignment_expression.theInfo.theType != Type.Error) {
+                    if ($assignment_expression.theInfo.theType == Type.Float) {
+                        Info theInfo = new Info();
+                        theInfo.set(Type.Float, varCount++, "");
+                        TextCode.add(theInfo.getValue() + " = fpext float " + $assignment_expression.theInfo.getValue() + " to double");
+                        call += ", double " + theInfo.getValue();
+                    } else {
+                        call += ", " + $assignment_expression.theInfo.getType() + " " + $assignment_expression.theInfo.getValue();
+                    }
+                }
 			}
 		)* ')' ';'
         {
@@ -682,7 +709,6 @@ returns [Info theInfo]
     :   '(' type ')' a = cast_expression
         {
             if (TRACEON) System.out.println("cast_expression\t\t: '(' type ')' cast_expression");
-            $theInfo = $a.theInfo;
             $theInfo.theType = $type.attr_type;
             /////
         }
