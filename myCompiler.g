@@ -63,7 +63,7 @@ options {
         }
         String getValue() {
             if (theType == Type.Error) return "ERR";
-            if (theVar.varIndex < 0) {
+            if (theVar.varIndex == -1) {
                 switch (theType) {
                     case Char:
                     case Short:
@@ -316,9 +316,9 @@ returns [String next]
         { if (TRACEON) System.out.println("statement\t\t: expression_statement"); }
     |   if_statement[$next]
         { if (TRACEON) System.out.println("statement\t\t: if_statement"); }
-    |   while_statement
+    |   while_statement[$next]
         { if (TRACEON) System.out.println("statement\t\t: while_statement"); }
-    |   for_statement
+    |   for_statement[$next]
         { if (TRACEON) System.out.println("statement\t\t: for_statement"); }
     |   switch_statement
         { if (TRACEON) System.out.println("statement\t\t: switch_statement"); }
@@ -368,32 +368,48 @@ else_statement
         { if (TRACEON) System.out.println("else_statement\t\t: else statement"); }
     ;
 while_statement
-    :   'do' statement 'while' '(' expression ')' ';'
+[String next]
+returns [String l]
+    :   { $l = newLabel(); TextCode.add("br label \%" + $l); TextCode.add($l + ":"); }
+    (   'do' statement 'while' '(' a = expression ')' ';'
         {
 			if (TRACEON) System.out.println("while_statement\t\t: do statement while ( expression ) ;");
 			
-			if ($expression.theInfo.theType != Type.Bool) {
+			if ($a.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $while_statement.start.getLine() + ": Type mismatch in a while_statement's condition.");
-			}
+			} else {
+                TextCode.add("br i1 " + $a.theInfo.getValue() + ", label \%" + $l + ", label \%" + $next);
+                TextCode.add($next + ":");
+            }
 		}
-    |   'while' '(' expression ')' statement
+    |   'while' '(' b = expression ')'
         {
 			if (TRACEON) System.out.println("while_statement\t\t: while ( expression ) statement");
 			
-			if ($expression.theInfo.theType != Type.Bool) {
+			if ($b.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $while_statement.start.getLine() + ": Type mismatch in a while_statement's condition.");
-			}
-		}
+			} else {
+                String lb = newLabel();
+                TextCode.add("br i1 " + $b.theInfo.getValue() + ", label \%" + lb + ", label \%" + $next);
+                TextCode.add(lb + ":");
+            }
+		} statement { TextCode.add("br label \%" + $l); TextCode.add($next + ":"); }
+    )
     ;
 for_statement
-    :   'for' '(' expression_statement a = expression ';' expression? ')' statement
-        {
-			if (TRACEON) System.out.println("for_statement\t\t: 'for' '(' expression_statement expression ';' expression? ')' statement");
-			
-			if ($a.theInfo.theType != Type.Bool) {
+[String next]
+returns [String la, String lb, String lc]
+    :   { $la = newLabel(); $lb = newLabel(); $lc = newLabel(); }
+        'for' '(' expression_statement { TextCode.add("br label \%" + $la); TextCode.add($la + ":"); }
+        a = expression ';'  
+        {   
+            if ($a.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $for_statement.start.getLine() + ": Type mismatch in a for_statement's condition.");
-			}
-		}
+			} else TextCode.add("br i1 " + $a.theInfo.getValue() + ", label \%" + $lc + ", label \%" + $next); TextCode.add($lb + ":");
+        }
+        expression? ')'     { TextCode.add("br label \%" + $la); TextCode.add($lc + ":"); }
+        statement           { TextCode.add("br label \%" + $lb); TextCode.add($next + ":"); }
+        { if (TRACEON) System.out.println("for_statement\t\t: 'for' '(' expression_statement expression ';' expression? ')' statement"); }
     ;
 switch_statement
     :   'switch' '(' expression ')' '{' (labeled_statement[$expression.theInfo.theType])* '}'
@@ -483,8 +499,8 @@ returns [Info theInfo]
                 if ($assignment_operator.op == "=") {
                     store($a.theInfo, $theInfo);
                 } else {
-                    $theInfo = assign($assignment_operator.op, load($theInfo), $a.theInfo);
-                    store($theInfo, $theInfo);
+                    Info ans = assign($assignment_operator.op, load($theInfo), $a.theInfo);
+                    store(ans, $theInfo);
                 }
             }
 		}
@@ -703,7 +719,7 @@ returns [Info theInfo]
             else $theInfo = assign("sub", $b.theInfo, one);
         }
 	|   unary_operator cast_expression
-        {   /// & * !
+        {   /// & * ! /// not finish
             if (TRACEON) System.out.println("unary_expression\t: unary_operator cast_expression");
             Type type = $cast_expression.theInfo.theType;
             if ($unary_operator.op == "-") {
@@ -747,11 +763,11 @@ postfix_expression
 returns [Info theInfo]
 @init { theInfo = new Info(); }
 	:   primary_expression { $theInfo = $primary_expression.theInfo; }
-        (   (	'[' expression ']' //////
+        (   (	'[' expression ']' ///
 			|   '(' ')'
 			|   '(' expression ')'
-			|   '++'
-			|   '--'
+			|   '++'    ///
+			|   '--'    ///
 			)
 		// |   ('.' | '->') ID
         )* { if (TRACEON) System.out.println("postfix_expression\t: primary_expression (('[' expression ']' | '(' ')' | '(' expression ')' | '++' | '--')*"); }

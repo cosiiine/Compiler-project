@@ -1,22 +1,21 @@
 #include <stdio.h>
-
-void main() {
-    float a = -1.0e-3;  // exp float
-    int x = 0, y = 1;
-
-    switch (x)
-    {
-        case 0:
-            a += x;     // a, x: different type
-            break;
-
-        case 1.2:       // wrong type
-            a++;
-            break;
-        
-        default:
-            break;
+int a;
+int z(int a, int b) {
+    return a + b;
+}
+int main()
+{
+    int a = 0;
+    int b = 1;
+    do {
+        a += 1;
+        printf("%d", a);
+    } while (a < 10)
+    
+    while (a > 0) {
+        a = a - 1;
+        printf("%d", a);
     }
 
-    return;
+    return 0;
 }
