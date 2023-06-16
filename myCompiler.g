@@ -291,11 +291,13 @@ returns [Info theInfo]
 	;
 /* Statements */
 statement
-    :   compound_statement
+returns [String next]
+    :   { $next = newLabel(); }
+    (   compound_statement
         { if (TRACEON) System.out.println("statement\t\t: compound_statement"); }
     |   expression_statement
         { if (TRACEON) System.out.println("statement\t\t: expression_statement"); }
-    |   if_statement
+    |   if_statement[$next]
         { if (TRACEON) System.out.println("statement\t\t: if_statement"); }
     |   while_statement
         { if (TRACEON) System.out.println("statement\t\t: while_statement"); }
@@ -309,6 +311,7 @@ statement
         { if (TRACEON) System.out.println("statement\t\t: printf_statement"); }
     |	';'
         { if (TRACEON) System.out.println("statement\t\t: ';'"); }
+    )
     ;
 compound_statement
     :   '{' { saved = top; }
@@ -324,14 +327,24 @@ expression_statement
         { if (TRACEON) System.out.println("expression_statement\t: expression ';'"); }
     ;
 if_statement
-    :   'if' '(' expression ')' statement (('else') => else_statement)?
+[String next]
+returns [String t, String f]
+    :   'if' '(' expression ')'
         {
-			if (TRACEON) System.out.println("if_statement\t\t: if ( expression ) statement");
-			
 			if ($expression.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $if_statement.start.getLine() + ": Type mismatch in a if_statement's condition.");
-			}
-		}
+			} else {
+                $t = newLabel();
+                $f = newLabel();
+                TextCode.add("br i1 " + $expression.theInfo.getValue() + ", label \%" + $t + ", label \%" + $f);
+                TextCode.add($t + ":");
+            }
+        } statement { TextCode.add("br label \%" + $next); TextCode.add($f + ":"); }
+        (('else') =>  else_statement)? { TextCode.add("br label \%" + $next); }
+        {   
+            if (TRACEON) System.out.println("if_statement\t\t: if ( expression ) statement");
+            TextCode.add($next + ":");
+        }
     ;
 else_statement
     :   'else' statement
@@ -564,6 +577,7 @@ returns [Info theInfo]
 					$theInfo.theType = Type.Error;
 				} else {
                     $theInfo = assign($equality_operator.op, $theInfo, $b.theInfo);
+                    $theInfo.theType = Type.Bool;
                 }
 			}
 		)*
@@ -579,6 +593,7 @@ returns [Info theInfo]
 					$theInfo.theType = Type.Error;
 				} else {
                     $theInfo = assign($relational_operator.op, $theInfo, $b.theInfo);
+                    $theInfo.theType = Type.Bool;
                 }
 			}
 		)*
@@ -819,8 +834,8 @@ equality_operator
 [Type attr_type]
 returns [String op]
 	:	{
-            if ($attr_type == Type.Float) $op = "icmp ";
-            else $op = "fcmp ";
+            if ($attr_type == Type.Float) $op = "fcmp ";
+            else $op = "icmp ";
         }
     (   '==' 	{ if (TRACEON) System.out.println("equality_operator\t: '=='");	$op += "eq";	}
 	| 	'!='	{ if (TRACEON) System.out.println("equality_operator\t: '!='");	$op += "ne";	}
@@ -831,8 +846,8 @@ relational_operator
 [Type attr_type]
 returns [String op]
 	:	{
-            if ($attr_type == Type.Float) $op = "icmp ";
-            else $op = "fcmp ";
+            if ($attr_type == Type.Float) $op = "fcmp ";
+            else $op = "icmp ";
         }
     (   '>' 	{   if (TRACEON) System.out.println("relational_operator\t: '>'");
                     if ($attr_type == Type.Unsigned) $op += "ugt";
