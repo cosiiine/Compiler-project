@@ -38,36 +38,49 @@ options {
         Error
     }
 	class tVar {
-		int   varIndex; // temporary variable's index. Ex: t1, t2, ..., etc.
-		int   iValue;   // value of constant integer. Ex: 123.
-		float fValue;   // value of constant floating point. Ex: 2.314.
-        String cValue;  // value of constant string or char.
-        String name;
+		int   varIndex; // temporary variable's index.
+		int   iValue;   // value of constant integer.
+		float fValue;   // value of constant floating point.
 	};
 	class Info {
 		Type theType;
 		tVar theVar;
+        private String name;
 		Info() {
             theType = Type.Error;
             theVar = new tVar();
+            theVar.varIndex = -1;
 		}
+        void set(Type type, int index, String str) {
+            theType = type;
+            theVar.varIndex = index;
+            if (index < 0) {
+                if (type == Type.Float) theVar.fValue = Float.parseFloat(str);
+                else theVar.iValue = Integer.parseInt(str);
+            } else name = str;
+        }
         String getValue() {
-            switch (theType) {
-                case Char:
-                    return theVar.cValue;
-                case Short:
-                case Int:
-                case Signed:
-                case Unsigned:
-                case Long:
-                    return Integer.toString(theVar.iValue);
-                case Float:
-                    return Float.toString(theVar.fValue);
+            if (theType == Type.Error) return "ERR";
+            if (theVar.varIndex < 0) {
+                switch (theType) {
+                    case Char:
+                    case Short:
+                    case Int:
+                    case Signed:
+                    case Unsigned:
+                    case Long:
+                        return Integer.toString(theVar.iValue);
+                    case Float:
+                        return String.format("\%.6e", theVar.fValue);
+                        // return Integer.toHexString(Float.floatToIntBits(theVar.fValue));
+                }
             }
-            return "";
+            return name;
         }
         String getType() {
             switch (theType) {
+                case Void:
+                    return "void";
                 case Char:
                     return "i8";
                 case Short:
@@ -77,14 +90,30 @@ options {
                 case Unsigned:
                     return "i32";
                 case Long:
-                    return "64";
+                    return "i64";
                 case Float:
                     return "float";
             }
-            return "";
+            return "ERR";
         }
         int getAlign() {
             switch (theType) {
+                case Char:
+                    return 1;
+                case Short:
+                    return 2;
+                case Int:
+                case Signed:
+                case Unsigned:
+                case Float:
+                    return 4;
+                case Long:
+                    return 8;
+            }
+            return 0;
+        }
+        int getAlign(Type type) {
+            switch (type) {
                 case Char:
                     return 1;
                 case Short:
@@ -134,17 +163,30 @@ options {
             Info theEntry = new Info();
             theEntry.theType = type;
             if (top.prev == null) {
-                theEntry.theVar.name = "@" + text;
-                theEntry.theVar.varIndex = -1;
-            }
-            else {
-                theEntry.theVar.name = "\%t" + Integer.toString(varCount);
-                theEntry.theVar.varIndex = varCount++;
+                theEntry.set(type, 0, "@" + text);
+            } else {
+                theEntry.set(type, varCount, "\%t" + Integer.toString(varCount++));
             }
             top.put(text, theEntry);
             return theEntry;
         }
         return new Info();
+    }
+    Info load(Info a) {
+        Info theInfo = new Info();
+        theInfo.set(a.theType, varCount, "\%t" + Integer.toString(varCount++));
+        TextCode.add(theInfo.getValue() + " = load " + a.getType() + ", " + a.getType() + "* " + a.getValue() + ", align " + a.getAlign());
+        return theInfo;
+    }
+    Info assign(String op, Info a, Info b) {
+        Info theInfo = new Info();
+        if (a.getType() != b.getType()) return theInfo;
+        theInfo.set(a.theType, varCount, "\%t" + Integer.toString(varCount++));
+        TextCode.add(theInfo.getValue() + " = " + op + " " + a.getType() + " " + a.getValue() + ", " + b.getValue());
+        return theInfo;
+    }
+    void store(Info var, Info a) {
+        TextCode.add("store " + a.getType() + " " + var.getValue() + ", " + a.getType() + "* " + a.getValue() + ", align " + a.getAlign());
     }
 }
 
@@ -181,32 +223,27 @@ init_declarator
             {
                 Info theEntry = declare($a.text, $attr_type, $a.getLine());
                 if (top.prev == null) {
-                    TextCode.add(theEntry.theVar.name + " = common dso_local global " + theEntry.getType() + " 0, align " + theEntry.getAlign());
+                    if (theEntry.theType == Type.Float) TextCode.add(theEntry.getValue() + " = common dso_local global " + theEntry.getType() + " 0.000000e+00, align " + theEntry.getAlign());
+                    else TextCode.add(theEntry.getValue() + " = common dso_local global " + theEntry.getType() + " 0, align " + theEntry.getAlign());
                 } else {
-                    TextCode.add(theEntry.theVar.name + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
+                    TextCode.add(theEntry.getValue() + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
                 }
             }
         |   b = ID '=' initializer
             {
                 Info theEntry = declare($b.text, $attr_type, $b.getLine());
-                if (theEntry.theType != Type.Error && $attr_type != $initializer.theInfo.theType) {
+                if (theEntry.theType == Type.Error && $attr_type != $initializer.theInfo.theType) {
                     System.out.println("Error! " + $b.getLine() + ": Type mismatch for the operator = in a declaration.");
                 } else {
-                    int var = theEntry.theVar.varIndex;
-                    String name = theEntry.theVar.name;
-                    theEntry = $initializer.theInfo;
-                    theEntry.theVar.varIndex = var;
-                    theEntry.theVar.name = name;
-                    top.put($b.text, theEntry);
                     if (top.prev == null) {
-                        TextCode.add(theEntry.theVar.name + " = dso_local global " + theEntry.getType() + " " + theEntry.getValue() + ", align " + theEntry.getAlign());
+                        TextCode.add(theEntry.getValue() + " = dso_local global " + theEntry.getType() + " " + $initializer.theInfo.getValue() + ", align " + theEntry.getAlign());
                     } else {
-                        TextCode.add(theEntry.theVar.name + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
-                        TextCode.add("store " + theEntry.getType() + " " + theEntry.getValue() + ", " + theEntry.getType() + "* " + theEntry.theVar.name+ ", align " + theEntry.getAlign());
+                        TextCode.add(theEntry.getValue() + " = alloca " + theEntry.getType() + ", align " + theEntry.getAlign());
+                        store($initializer.theInfo, theEntry);
                     }
                 }
             }
-        ) { if (TRACEON) System.out.println("init_declarator\t\t: ID ('=' initializer)?"); }
+        )   { if (TRACEON) System.out.println("init_declarator\t\t: ID ('=' initializer)?"); }
     ;
 initializer
 returns [Info theInfo]
@@ -223,7 +260,7 @@ returns [String define]
         {
             varCount = 0;
             Info theInfo = declare($ID.text, $type.attr_type, $ID.getLine());
-            define = "define dso_local " + theInfo.getType() + " " + theInfo.theVar.name + "(";
+            define = "define dso_local " + theInfo.getType() + " " + theInfo.getValue() + "(";
             place = $ID.text;
             if (place.equals("main")) MAIN = true;
             saved = top;
@@ -239,8 +276,8 @@ returns [String define]
     ;
 parameter_list
 returns [String param]
-	:   a = parameter_declaration       { $param = $a.theInfo.getType() + " " + $a.theInfo.theVar.name; }
-        (',' b = parameter_declaration { $param += ", " + $b.theInfo.getType() + " " + $b.theInfo.theVar.name; })*
+	:   a = parameter_declaration      { $param = $a.theInfo.getType() + " " + $a.theInfo.getValue(); }
+        (',' b = parameter_declaration { $param += ", " + $b.theInfo.getType() + " " + $b.theInfo.getValue(); })*
         { if (TRACEON) System.out.println("parameter_list\t\t: parameter_declaration (',' parameter_declaration)*"); }
 	|	{ $param = ""; }
 	;
@@ -349,7 +386,6 @@ jump_statement
 	:   'goto' ID ';'
 		{
 			if (TRACEON) System.out.println("jump_statement\t\t: goto ID");
-			
 			if (top.get($ID.text) == null) {
 				System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
 			}
@@ -359,41 +395,35 @@ jump_statement
 	|   'return' expression ';'
 		{
 			if (TRACEON) System.out.println("jump_statement\t\t: 'return' expression ';'");
-			
 			if (top.get(place).theType != $expression.theInfo.theType) {
 				System.out.println("Error! " + $expression.start.getLine() + ": Return wrong type.");
-			}
+			} else { TextCode.add("ret " + $expression.theInfo.getType() + " " + $expression.theInfo.getValue()); }
 		}
 	|	'return' ';'
 		{
 			if (TRACEON) System.out.println("jump_statement\t\t: 'return' ';'");
-
 			if (top.get(place).theType != Type.Void) {
 				System.out.println("Error! " + $jump_statement.start.getLine() + ": Return wrong type.");
-			}
+			} else { TextCode.add("ret void"); }
 		}
 	;
 printf_statement
 returns [String call]
     :   'printf' '(' LITERAL
         {
-            String str = "[" + $LITERAL.text.length() + " * i8]";
-            TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c" + $LITERAL.text + "\\0A\\00");
+            String str = "[" + $LITERAL.text.length() + " x i8]";
+            TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c" + $LITERAL.text.substring(0, $LITERAL.text.length() - 1) + "\\0A\\00\"");
             $call = "\%t" + Integer.toString(varCount) + " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds (" + str + ", " + str + "* @.str." + Integer.toString(strCount) + ", i64 0, i64 0)";
             strCount++; varCount++;
         }
-		(	',' ID
+		(	',' assignment_expression
 			{
-                Info theInfo = top.get($ID.text);
-				if (theInfo == null) {
-					System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
-				} else {
-                    call += ", " + theInfo.getType() + " " + theInfo.theVar.name;
-                }
+                if ($assignment_expression.theInfo.theType != Type.Error)
+                    call += ", " + $assignment_expression.theInfo.getType() + " " + $assignment_expression.theInfo.getValue();
 			}
 		)* ')' ';'
         {
-            if (TRACEON) System.out.println("printf_statement\t: printf ( LITERAL (, ID)* );");
+            if (TRACEON) System.out.println("printf_statement\t: printf ( LITERAL (, assignment_expression)* );");
             TextCode.add(call + ")");
         }
     ;
@@ -406,22 +436,27 @@ returns [Info theInfo]
     ;
 assignment_expression
 returns [Info theInfo]
-	:   ID assignment_operator a = assignment_expression
+	:   ID
         {
-			if (TRACEON) System.out.println("assignment_expression\t: ID assignment_operator assignment_expression");
-			
-			if (top.get($ID.text) == null) {
+            if (top.get($ID.text) == null) {
 				System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
                 $theInfo = new Info();
-			} else {
-				if (top.get($ID.text).theType != $a.theInfo.theType) {
-					System.out.println("Error! " + $ID.getLine() + ": Type mismatch for the two sides of an assignment.");
-                    $theInfo = new Info();
-				} else if ($assignment_operator.op == "\%=" && ($a.theInfo.theType != Type.Int || top.get($ID.text).theType != Type.Int)) {
-					System.out.println("Error! " + $a.start.getLine() + ": The operand type of operator \%= is not an integer.");
-                    $theInfo = new Info();
-				} else { $theInfo = top.get($ID.text); }
-			}
+			} else $theInfo = top.get($ID.text);
+        }
+        assignment_operator[$theInfo.theType] a = assignment_expression
+        {
+			if (TRACEON) System.out.println("assignment_expression\t: ID assignment_operator assignment_expression");
+            if ($theInfo.theType != $a.theInfo.theType) {
+                System.out.println("Error! " + $ID.getLine() + ": Type mismatch for the two sides of an assignment.");
+                $theInfo = new Info();
+            } else {
+                if ($assignment_operator.op == "=") {
+                    store($a.theInfo, $theInfo);
+                } else {
+                    $theInfo = assign($assignment_operator.op, load($theInfo), $a.theInfo);
+                    store($theInfo, $theInfo);
+                }
+            }
 		}
 	|   conditional_expression
         {
@@ -432,7 +467,7 @@ returns [Info theInfo]
 conditional_expression
 returns [Info theInfo]
 	: 	logical_or_expression { $theInfo = $logical_or_expression.theInfo; }
-		('?' a = conditional_expression ':' b = conditional_expression
+		('?' a = conditional_expression ':' b = conditional_expression//////////
 			{
 				if ($theInfo.theType != Type.Bool || $a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $logical_or_expression.start.getLine() + ": Type mismatch for the operator ? : in an expression.");
@@ -452,6 +487,8 @@ returns [Info theInfo]
 				if ($theInfo.theType != Type.Bool || $b.theInfo.theType != Type.Bool) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator || in an expression.");
                     $theInfo.theType = Type.Error;
+                } else {
+                    $theInfo = assign("or", $theInfo, $b.theInfo);
                 }
 			}
 		)*
@@ -465,6 +502,8 @@ returns [Info theInfo]
 				if ($theInfo.theType != Type.Bool || $b.theInfo.theType != Type.Bool) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator && in an expression.");
                     $theInfo.theType = Type.Error;
+                } else {
+                    $theInfo = assign("and", $theInfo, $b.theInfo);
                 }
 			}
 		)*
@@ -478,7 +517,9 @@ returns [Info theInfo]
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator | in an expression.");
 					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign("or", $theInfo, $b.theInfo);
+                }
 			}
 		)*
         { if (TRACEON) System.out.println("inclusive_or_expression\t: exclusive_or_expression ('|' exclusive_or_expression)*"); }
@@ -491,7 +532,9 @@ returns [Info theInfo]
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator ^ in an expression.");
 					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign("xor", $theInfo, $b.theInfo);
+                }
 			}
 		)*
         { if (TRACEON) System.out.println("exclusive_or_expression\t: and_expression ('^' and_expression)*"); }
@@ -504,7 +547,9 @@ returns [Info theInfo]
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator & in an expression.");
 					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign("and", $theInfo, $b.theInfo);
+                }
 			}
 		)*
         { if (TRACEON) System.out.println("and_expression\t\t: equality_expression ('&' equality_expression)*"); }
@@ -512,14 +557,14 @@ returns [Info theInfo]
 equality_expression
 returns [Info theInfo]
 	:   a = relational_expression { $theInfo = $a.theInfo; }
-		(	equality_operator b = relational_expression
+		(	equality_operator[$theInfo.theType] b = relational_expression
 			{
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator " + $equality_operator.op + " in an expression.");
 					$theInfo.theType = Type.Error;
 				} else {
-					$theInfo.theType = Type.Bool;
-				}
+                    $theInfo = assign($equality_operator.op, $theInfo, $b.theInfo);
+                }
 			}
 		)*
 		{ if (TRACEON) System.out.println("equality_expression\t: relational_expression (equality_operator relational_expression)*"); }
@@ -527,14 +572,14 @@ returns [Info theInfo]
 relational_expression
 returns [Info theInfo]
 	:   a = shift_expression { $theInfo = $a.theInfo; }
-		(	relational_operator b = shift_expression
+		(	relational_operator[$theInfo.theType] b = shift_expression
 			{ 
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator " + $relational_operator.op + " in an expression.");
 					$theInfo.theType = Type.Error;
 				} else {
-					$theInfo.theType = Type.Bool;
-				}
+                    $theInfo = assign($relational_operator.op, $theInfo, $b.theInfo);
+                }
 			}
 		)*
         { if (TRACEON) System.out.println("relational_expression\t: shift_expression (relational_operator shift_expression)*"); }
@@ -542,12 +587,14 @@ returns [Info theInfo]
 shift_expression
 returns [Info theInfo]
     :   a = add_expression { $theInfo = $a.theInfo; }
-		(	shift_operator b = add_expression
+		(	shift_operator[$theInfo.theType] b = add_expression
 			{
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator " + $shift_operator.op + " in an expression.");
 					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign($shift_operator.op, $theInfo, $b.theInfo);
+                }
 			}
 		)* 
         { if (TRACEON) System.out.println("shift_expression\t\t: add_expression (shift_operator add_expression)* "); }
@@ -555,12 +602,14 @@ returns [Info theInfo]
 add_expression
 returns [Info theInfo]
     :   a = mult_expression { $theInfo = $a.theInfo; }
-		(	add_operator b = mult_expression
+		(	add_operator[$theInfo.theType] b = mult_expression
 			{
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator " + $add_operator.op + " in an expression.");
 					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign($add_operator.op, $theInfo, $b.theInfo);
+                }
 			}
 		)* 
         { if (TRACEON) System.out.println("add_expression\t\t: mult_expression (add_operator mult_expression)* "); }
@@ -568,15 +617,14 @@ returns [Info theInfo]
 mult_expression
 returns [Info theInfo]
     :   a = cast_expression { $theInfo = $a.theInfo; }
-		(	mult_operator b = cast_expression
+		(	mult_operator[$theInfo.theType] b = cast_expression
 			{
 				if ($a.theInfo.theType != $b.theInfo.theType) {
 					System.out.println("Error! " + $a.start.getLine() + ": Type mismatch for the operator " + $mult_operator.op + " in an expression.");
 					$theInfo.theType = Type.Error;
-				} else if ($mult_operator.op == "\%" && $a.theInfo.theType != Type.Int) {
-					System.out.println("Error! " + $a.start.getLine() + ": The operand type of operator \% is not an integer.");
-					$theInfo.theType = Type.Error;
-				}
+				} else {
+                    $theInfo = assign($mult_operator.op, $theInfo, $b.theInfo);
+                }
 			}
 		)* 
         { if (TRACEON) System.out.println("mult_expression\t\t: cast_expression (mult_operator cast_expression)* "); }
@@ -588,10 +636,11 @@ returns [Info theInfo]
             if (TRACEON) System.out.println("cast_expression\t\t: '(' type ')' cast_expression");
             $theInfo = $a.theInfo;
             $theInfo.theType = $type.attr_type;
+            /////
         }
     |   unary_expression
         {
-            if (TRACEON) System.out.println("cast_expression\t\t: '(' type ')' cast_expression");
+            if (TRACEON) System.out.println("cast_expression\t\t: unary_expression");
             $theInfo = $unary_expression.theInfo;
         }
     ;
@@ -599,73 +648,113 @@ unary_expression
 returns [Info theInfo]
 @init { theInfo = new Info(); }
     :   postfix_expression
-        { if (TRACEON) System.out.println("unary_expression\t: postfix_expression"); 	            $theInfo = $postfix_expression.theInfo;	}
-	|   '++' a = unary_expression
-        { if (TRACEON) System.out.println("unary_expression\t: '++' unary_expression");             $theInfo = $a.theInfo;	}
+        {   
+            if (TRACEON) System.out.println("unary_expression\t: postfix_expression");
+            $theInfo = $postfix_expression.theInfo;
+        }
+	|   '++' a = unary_expression/////
+        {   
+            if (TRACEON) System.out.println("unary_expression\t: '++' unary_expression");
+            Info one = new Info();
+            if ($a.theInfo.theType == Type.Char) one.set(Type.Int, -1, "1");
+            else one.set($a.theInfo.theType, -1, "1");
+            if ($a.theInfo.theType == Type.Float) $theInfo = assign("fadd", $a.theInfo, one);
+            else $theInfo = assign("add", $a.theInfo, one);
+        }
 	|   '--' b = unary_expression
-        { if (TRACEON) System.out.println("unary_expression\t: '--' unary_expression");             $theInfo = $b.theInfo;	}
+        {   
+            if (TRACEON) System.out.println("unary_expression\t: '--' unary_expression");
+            Info one = new Info();
+            if ($b.theInfo.theType == Type.Char) one.set(Type.Int, -1, "1");
+            else one.set($b.theInfo.theType, -1, "1");
+            if ($b.theInfo.theType == Type.Float) $theInfo = assign("fsub", $b.theInfo, one);
+            else $theInfo = assign("sub", $b.theInfo, one);
+        }
 	|   unary_operator cast_expression
-        { if (TRACEON) System.out.println("unary_expression\t: unary_operator cast_expression");    $theInfo = $cast_expression.theInfo; }
-	|   'sizeof' unary_expression
-        { if (TRACEON) System.out.println("unary_expression\t: 'sizeof' unary_expression");         $theInfo.theType = Type.Int; }
+        {   /// & * !
+            if (TRACEON) System.out.println("unary_expression\t: unary_operator cast_expression");
+            Type type = $cast_expression.theInfo.theType;
+            if ($unary_operator.op == "-") {
+                if (type == Type.Float) {
+                    $theInfo.set(type, varCount, "\%t" + Integer.toString(varCount++));
+                    TextCode.add($theInfo.getValue() + " = fneg float " + $cast_expression.theInfo.getValue());
+                } else if (type == Type.Char) {
+                    ///
+                } else {
+                    Info zero = new Info();
+                    zero.set($a.theInfo.theType, -1, "0");
+                    $theInfo = assign("sub nuw nsw", zero, $cast_expression.theInfo);
+                }
+            } else if ($unary_operator.op == "~") {
+                if (type == Type.Float) {
+                    /// error
+                } else if (type == Type.Char) {
+                    /// extend
+                } else {
+                    Info neg = new Info();
+                    neg.set($a.theInfo.theType, -1, "-1");
+                    $theInfo = assign("xor", $cast_expression.theInfo, neg);
+                }
+            } else if ($unary_operator.op == "!") {
+                ///
+            }
+        }
+	|   'sizeof' c = unary_expression
+        {   
+            if (TRACEON) System.out.println("unary_expression\t: 'sizeof' unary_expression");
+            $theInfo.set(Type.Int, -1, Integer.toString($c.theInfo.getAlign()));
+        }
 	|   'sizeof' '(' type ')'
-        { if (TRACEON) System.out.println("unary_expression\t: 'sizeof' '(' type ')'"); 	        $theInfo.theType = Type.Int; }
+        {   
+            if (TRACEON) System.out.println("unary_expression\t: 'sizeof' '(' type ')'");
+            $theInfo.set(Type.Int, -1, Integer.toString(theInfo.getAlign($type.attr_type)));
+        }
 	;
 
 postfix_expression
 returns [Info theInfo]
 @init { theInfo = new Info(); }
-	:   primary_expression { $theInfo.theType = Type.NoExist; }
-        (   (	'[' expression ']'
+	:   primary_expression { $theInfo = $primary_expression.theInfo; }
+        (   (	'[' expression ']' //////
 			|   '(' ')'
 			|   '(' expression ')'
 			|   '++'
 			|   '--'
 			)
-			{
-				if ($theInfo.theType == Type.NoExist) {
-					$theInfo = $primary_expression.theInfo;
-				}
-			}
 		// |   ('.' | '->') ID
-        )*
-		{
-			if (TRACEON) System.out.println("postfix_expression\t: primary_expression (('[' expression ']' | '(' ')' | '(' expression ')' | '++' | '--')*");
-
-			if ($theInfo.theType == Type.NoExist) {
-                $theInfo = $primary_expression.theInfo;
-            }
-		}
+        )* { if (TRACEON) System.out.println("postfix_expression\t: primary_expression (('[' expression ']' | '(' ')' | '(' expression ')' | '++' | '--')*"); }
 	;
 
 primary_expression
 returns [Info theInfo]
-@init { theInfo = new Info(); }
     :   ID
         {
 			if (TRACEON) System.out.println("primary_expression\t: ID");
-
 			if (top.get($ID.text) == null) {
 				System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
+                $theInfo = new Info();
 			}  else {
-				$theInfo = top.get($ID.text);
+				$theInfo = load(top.get($ID.text));
 			}
 		}
     |   constant
-        { if (TRACEON) System.out.println("primary_expression\t: constant"); 			$theInfo = $constant.theInfo; 	}
+        {  
+            if (TRACEON) System.out.println("primary_expression\t: constant");
+            $theInfo = $constant.theInfo;
+        }
     |   '(' expression ')'
         { if (TRACEON) System.out.println("primary_expression\t: '(' expression ')'"); 	$theInfo = $expression.theInfo; }
     ;
 
 /* Definition */
 type 				returns [Type attr_type]
-    :   'void'      { if (TRACEON) System.out.println("type\t\t\t: 'void'");	$attr_type = Type.Void;	}
-	|   'char'      { if (TRACEON) System.out.println("type\t\t\t: 'char'");	$attr_type = Type.Char;	}
-	|   'short'     { if (TRACEON) System.out.println("type\t\t\t: 'short'");	$attr_type = Type.Short;}
-	|   'int'       { if (TRACEON) System.out.println("type\t\t\t: 'int'");		$attr_type = Type.Int;	}
-	|   'long'      { if (TRACEON) System.out.println("type\t\t\t: 'long'");	$attr_type = Type.Long;	}
-	|   'float'     { if (TRACEON) System.out.println("type\t\t\t: 'float'");	$attr_type = Type.Float;}
-	|   'double'    { if (TRACEON) System.out.println("type\t\t\t: 'double'");	$attr_type = Type.Float;}
+    :   'void'      { if (TRACEON) System.out.println("type\t\t\t: 'void'");	$attr_type = Type.Void;	    }
+	|   'char'      { if (TRACEON) System.out.println("type\t\t\t: 'char'");	$attr_type = Type.Char;	    }
+	|   'short'     { if (TRACEON) System.out.println("type\t\t\t: 'short'");	$attr_type = Type.Short;    }
+	|   'int'       { if (TRACEON) System.out.println("type\t\t\t: 'int'");		$attr_type = Type.Int;	    }
+	|   'long'      { if (TRACEON) System.out.println("type\t\t\t: 'long'");	$attr_type = Type.Long;	    }
+	|   'float'     { if (TRACEON) System.out.println("type\t\t\t: 'float'");	$attr_type = Type.Float;    }
+	|   'double'    { if (TRACEON) System.out.println("type\t\t\t: 'double'");	$attr_type = Type.Float;    }
 	|   'signed'    { if (TRACEON) System.out.println("type\t\t\t: 'signed' ");	$attr_type = Type.Signed;	}
 	|   'unsigned'  { if (TRACEON) System.out.println("type\t\t\t: 'unsigned'");$attr_type = Type.Unsigned;	}
     ;
@@ -673,63 +762,151 @@ type 				returns [Type attr_type]
 constant
 returns [Info theInfo]
 @init { theInfo = new Info(); }
-    :   DEC_NUM     { if (TRACEON) System.out.println("constant\t\t: DEC_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.parseInt($DEC_NUM.text); }
-    |   OCT_NUM     { if (TRACEON) System.out.println("constant\t\t: OCT_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($OCT_NUM.text, 8);  }
-    |   HEX_NUM     { if (TRACEON) System.out.println("constant\t\t: HEX_NUM"); 	$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($HEX_NUM.text,16);  }
+    :   DEC_NUM     { if (TRACEON) System.out.println("constant\t\t: DEC_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.parseInt($DEC_NUM.text);   }
+    |   OCT_NUM     { if (TRACEON) System.out.println("constant\t\t: OCT_NUM");		$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($OCT_NUM.text, 8); }
+    |   HEX_NUM     { if (TRACEON) System.out.println("constant\t\t: HEX_NUM"); 	$theInfo.theType = Type.Int;    $theInfo.theVar.iValue = Integer.valueOf($HEX_NUM.text,16); }
     |   FLOAT_NUM   { if (TRACEON) System.out.println("constant\t\t: FLOAT_NUM");	$theInfo.theType = Type.Float;  $theInfo.theVar.fValue = Float.parseFloat($FLOAT_NUM.text); }
-    |   CHAR_VAL    { if (TRACEON) System.out.println("constant\t\t: CHAR_VAL");	$theInfo.theType = Type.Char;   $theInfo.theVar.cValue = $CHAR_VAL.text; }
-    |   LITERAL     { if (TRACEON) System.out.println("constant\t\t: LITERAL ");	$theInfo.theType = Type.String; $theInfo.theVar.cValue = $LITERAL.text;  }
+    |   CHAR_VAL    { if (TRACEON) System.out.println("constant\t\t: CHAR_VAL");	$theInfo.theType = Type.Char;   $theInfo.theVar.iValue = (int) $CHAR_VAL.text.charAt(1);   }
+    |   LITERAL     { if (TRACEON) System.out.println("constant\t\t: LITERAL ");	$theInfo.theType = Type.String; $theInfo.theVar.iValue = -1;   } ///
     ;
 
-assignment_operator	returns [String op]
-	:   '='     { if (TRACEON) System.out.println("assignment_operator\t: '='");	$op = "=";	}
-	|   '*='    { if (TRACEON) System.out.println("assignment_operator\t: '*='");	$op = "*=";	}
-	|   '/='    { if (TRACEON) System.out.println("assignment_operator\t: '/='");	$op = "/=";	}
-	|   '%='    { if (TRACEON) System.out.println("assignment_operator\t: '\%='");	$op = "\%=";}
-	|   '+='    { if (TRACEON) System.out.println("assignment_operator\t: '+='");	$op = "+=";	}
-	|   '-='    { if (TRACEON) System.out.println("assignment_operator\t: '-='");	$op = "-=";	}
-	|   '<<='   { if (TRACEON) System.out.println("assignment_operator\t: '<<='");	$op = "<<=";}
-	|   '>>='   { if (TRACEON) System.out.println("assignment_operator\t: '>>='");	$op = ">>=";}
-	|   '&='    { if (TRACEON) System.out.println("assignment_operator\t: '&='");	$op = "&=";	}
-	|   '^='    { if (TRACEON) System.out.println("assignment_operator\t: '^='");	$op = "^=";	}
-	|   '|='    { if (TRACEON) System.out.println("assignment_operator\t: '|='");	$op = "|=";	}
+assignment_operator     //// System.out.println("Error! " + $a.start.getLine() + ": Operator " + $assignment_operator.op + " does not support " + storeInfo.getType());
+[Type attr_type]
+returns [String op]
+	:   '='     {   if (TRACEON) System.out.println("assignment_operator\t: '='");
+                    $op = "=";
+                }
+	|   '*='    {   if (TRACEON) System.out.println("assignment_operator\t: '*='");
+                    if ($attr_type == Type.Float) $op = "fmul";
+                    else $op = "mul nuw nsw";
+                }
+	|   '/='    {   if (TRACEON) System.out.println("assignment_operator\t: '/='");
+                    if ($attr_type == Type.Unsigned) $op = "udiv exact";
+                    else $op = "sdiv exact";
+                }
+	|   '%='    {   if (TRACEON) System.out.println("assignment_operator\t: '\%='");
+                    if ($attr_type == Type.Float) $op = "frem";
+                    else if ($attr_type == Type.Unsigned) $op = "urem";
+                    else $op = "srem";
+                }
+	|   '+='    {   if (TRACEON) System.out.println("assignment_operator\t: '+='");
+                    if ($attr_type == Type.Float) $op = "fadd";
+                    else $op = "add nuw nsw";
+                }
+	|   '-='    {   if (TRACEON) System.out.println("assignment_operator\t: '-='");
+                    if ($attr_type == Type.Float) $op = "fsub";
+                    else $op = "sub nuw nsw";
+                }
+	|   '<<='   {   if (TRACEON) System.out.println("assignment_operator\t: '<<='");
+                    $op = "shl nuw nsw";
+                }
+	|   '>>='   {   if (TRACEON) System.out.println("assignment_operator\t: '>>='");
+                    if ($attr_type == Type.Unsigned) $op = "lshr exact";
+                    else $op = "ashr exact";
+                }
+	|   '&='    {   if (TRACEON) System.out.println("assignment_operator\t: '&='");
+                    $op = "and";
+                }
+	|   '^='    {   if (TRACEON) System.out.println("assignment_operator\t: '^='");
+                    $op = "xor";
+                }
+	|   '|='    {   if (TRACEON) System.out.println("assignment_operator\t: '|='");
+                    $op = "or";
+                }
 	;
 
-equality_operator	returns [String op]
-	:	'==' 	{ if (TRACEON) System.out.println("equality_operator\t: '=='");	$op = "==";	}
-	| 	'!='	{ if (TRACEON) System.out.println("equality_operator\t: '!='");	$op = "!=";	}
+equality_operator
+[Type attr_type]
+returns [String op]
+	:	{
+            if ($attr_type == Type.Float) $op = "icmp ";
+            else $op = "fcmp ";
+        }
+    (   '==' 	{ if (TRACEON) System.out.println("equality_operator\t: '=='");	$op += "eq";	}
+	| 	'!='	{ if (TRACEON) System.out.println("equality_operator\t: '!='");	$op += "ne";	}
+    )
+    ;
+
+relational_operator
+[Type attr_type]
+returns [String op]
+	:	{
+            if ($attr_type == Type.Float) $op = "icmp ";
+            else $op = "fcmp ";
+        }
+    (   '>' 	{   if (TRACEON) System.out.println("relational_operator\t: '>'");
+                    if ($attr_type == Type.Unsigned) $op += "ugt";
+                    else $op += "sgt";
+                }
+	| 	'<' 	{   if (TRACEON) System.out.println("relational_operator\t: '<'");
+                    if ($attr_type == Type.Unsigned) $op += "ult";
+                    else $op += "slt";
+                }
+	| 	'>=' 	{   if (TRACEON) System.out.println("relational_operator\t: '>='");
+                    if ($attr_type == Type.Unsigned) $op += "uge";
+                    else $op += "sge";
+                }
+	| 	'<=' 	{   if (TRACEON) System.out.println("relational_operator\t: '<='");
+                    if ($attr_type == Type.Unsigned) $op += "ule";
+                    else $op += "sle";
+                }
+    )
 	;
 
-relational_operator	returns [String op]
-	:	'>' 	{ if (TRACEON) System.out.println("relational_operator\t: '>'");$op = ">";	}
-	| 	'<' 	{ if (TRACEON) System.out.println("relational_operator\t: '<'");$op = "<";	}
-	| 	'>=' 	{ if (TRACEON) System.out.println("relational_operator\t: '>='");$op = ">=";}
-	| 	'<=' 	{ if (TRACEON) System.out.println("relational_operator\t: '<='");$op = "<=";}
-	;
-
-shift_operator 		returns [String op]
-	:	'>>' 	{ if (TRACEON) System.out.println("shift_operator\t: '>>'");	$op = ">>";}
-	|	'<<' 	{ if (TRACEON) System.out.println("shift_operator\t: '<<'");	$op = "<<";}
+shift_operator
+[Type attr_type]
+returns [String op]
+	:	'>>' 	{   if (TRACEON) System.out.println("shift_operator\t: '>>'");
+                    if ($attr_type == Type.Unsigned) $op = "lshr exact";
+                    else $op = "ashr exact";
+                }
+	|	'<<' 	{   if (TRACEON) System.out.println("shift_operator\t: '<<'");
+                    $op = "shl nuw nsw";
+                }
 	;
 	
-add_operator 		returns [String op]
-	:	'+'		{ if (TRACEON) System.out.println("add_operator\t: '+'");	$op = "+";	}
-	|	'-'		{ if (TRACEON) System.out.println("add_operator\t: '-'");	$op = "-";	}
+add_operator
+[Type attr_type]
+returns [String op]
+	:	'+'		{   if (TRACEON) System.out.println("add_operator\t: '+'");
+                    if ($attr_type == Type.Float) $op = "fadd";
+                    else $op = "add nuw nsw";
+                }
+	|	'-'		{   if (TRACEON) System.out.println("add_operator\t: '-'");
+                    if ($attr_type == Type.Float) $op = "fsub";
+                    else $op = "sub nuw nsw";
+                }
 	;
 
-mult_operator 		returns [String op]
-	:	'*'		{ if (TRACEON) System.out.println("mult_operator\t: '*'");	$op = "*";	}
-	|	'/'		{ if (TRACEON) System.out.println("mult_operator\t: '/'");	$op = "/";	}
-	|	'%'		{ if (TRACEON) System.out.println("mult_operator\t: '\%'");	$op = "\%";	}
+mult_operator
+[Type attr_type]
+returns [String op]
+	:	'*'		{   
+                    if (TRACEON) System.out.println("mult_operator\t: '*'");
+                    if ($attr_type == Type.Float) $op = "fmul";
+                    else $op = "mul nuw nsw";
+                }
+	|	'/'		{   
+                    if (TRACEON) System.out.println("mult_operator\t: '/'");
+                    if ($attr_type == Type.Unsigned) $op = "udiv exact";
+                    else $op = "sdiv exact";
+                }
+	|	'%'		{   
+                    if (TRACEON) System.out.println("mult_operator\t: '\%'");
+                    if ($attr_type == Type.Float) $op = "frem";
+                    else if ($attr_type == Type.Unsigned) $op = "urem";
+                    else $op = "srem";
+                }
 	;
 
 unary_operator
-	:   '&' { if (TRACEON) System.out.println("unary_operator\t\t: '&'"); }
-	|   '*' { if (TRACEON) System.out.println("unary_operator\t\t: '*'"); }
-	|   '+' { if (TRACEON) System.out.println("unary_operator\t\t: '+'"); }
-	|   '-' { if (TRACEON) System.out.println("unary_operator\t\t: '-'"); }
-	|   '~' { if (TRACEON) System.out.println("unary_operator\t\t: '~'"); }
-	|   '!' { if (TRACEON) System.out.println("unary_operator\t\t: '!'"); }
+returns [String op]
+	:   '&' { if (TRACEON) System.out.println("unary_operator\t\t: '&'"); $op = "&"; }///
+	|   '*' { if (TRACEON) System.out.println("unary_operator\t\t: '*'"); $op = "*"; }///
+	|   '+' { if (TRACEON) System.out.println("unary_operator\t\t: '+'"); $op = "+"; }
+	|   '-' { if (TRACEON) System.out.println("unary_operator\t\t: '-'"); $op = "-"; }
+	|   '~' { if (TRACEON) System.out.println("unary_operator\t\t: '~'"); $op = "~"; }
+	|   '!' { if (TRACEON) System.out.println("unary_operator\t\t: '!'"); $op = "!"; }
 	;
 
 /* Fragment */

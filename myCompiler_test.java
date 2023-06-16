@@ -17,7 +17,7 @@ public class myCompiler_test {
 
             String file = args[0].substring(0, args[0].length() - 1) + "ll";
             FileWriter fd = new FileWriter(file);
-
+            System.out.println("=== TextCode ===");
             for (int i=0; i < text_code.size(); i++) {
                   System.out.println(text_code.get(i));
                   fd.write(text_code.get(i) + '\n');
