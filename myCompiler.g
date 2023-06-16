@@ -12,7 +12,6 @@ options {
 
 @members {
     boolean TRACEON = false;
-    boolean MAIN = false;
     int labelCount = 0;
     int varCount = 0;
     int strCount = 0;
@@ -358,21 +357,21 @@ expression_statement
 if_statement
 [String next]
 returns [String t, String f]
-    :   'if' '(' expression ')'
+    :   'if' '(' assignment_expression ')'
         {
-			if ($expression.theInfo.theType != Type.Bool) {
+			if ($assignment_expression.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $if_statement.start.getLine() + ": Type mismatch in a if_statement's condition.");
 			} else {
                 $t = newLabel();
                 $f = newLabel();
-                TextCode.add("br i1 " + $expression.theInfo.getValue() + ", label \%" + $t + ", label \%" + $f);
+                TextCode.add("br i1 " + $assignment_expression.theInfo.getValue() + ", label \%" + $t + ", label \%" + $f);
                 TextCode.add("");
                 TextCode.add($t + ":");
             }
         } block { TextCode.add("br label \%" + $next); TextCode.add(""); TextCode.add($f + ":"); }
         (('else') =>  else_statement)? { TextCode.add("br label \%" + $next); TextCode.add(""); }
         {   
-            if (TRACEON) System.out.println("if_statement\t\t: if ( expression ) statement");
+            if (TRACEON) System.out.println("if_statement\t\t: if ( assignment_expression ) statement");
             TextCode.add($next + ":");
         }
     ;
@@ -384,9 +383,9 @@ while_statement
 [String next]
 returns [String l]
     :   { $l = newLabel(); TextCode.add("br label \%" + $l); TextCode.add($l + ":"); TextCode.add(""); }
-    (   'do' block 'while' '(' a = expression ')' ';'
+    (   'do' block 'while' '(' a = assignment_expression ')' ';'
         {
-			if (TRACEON) System.out.println("while_statement\t\t: do statement while ( expression ) ;");
+			if (TRACEON) System.out.println("while_statement\t\t: do statement while ( assignment_expression ) ;");
 			
 			if ($a.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $while_statement.start.getLine() + ": Type mismatch in a while_statement's condition.");
@@ -396,9 +395,9 @@ returns [String l]
                 TextCode.add($next + ":");
             }
 		}
-    |   'while' '(' b = expression ')'
+    |   'while' '(' b = assignment_expression ')'
         {
-			if (TRACEON) System.out.println("while_statement\t\t: while ( expression ) statement");
+			if (TRACEON) System.out.println("while_statement\t\t: while ( assignment_expression ) statement");
 			
 			if ($b.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $while_statement.start.getLine() + ": Type mismatch in a while_statement's condition.");
@@ -416,7 +415,7 @@ for_statement
 returns [String la, String lb, String lc]
     :   { $la = newLabel(); $lb = newLabel(); $lc = newLabel(); }
         'for' '(' expression_statement { TextCode.add("br label \%" + $la); TextCode.add(""); TextCode.add($la + ":"); }
-        a = expression ';'  
+        a = assignment_expression ';'  
         {   
             if ($a.theInfo.theType != Type.Bool) {
 				System.out.println("Error! " + $for_statement.start.getLine() + ": Type mismatch in a for_statement's condition.");
@@ -426,13 +425,13 @@ returns [String la, String lb, String lc]
                 TextCode.add($lb + ":");
             }
         }
-        expression? ')' { TextCode.add("br label \%" + $la); TextCode.add(""); TextCode.add($lc + ":"); }
+        assignment_expression? ')' { TextCode.add("br label \%" + $la); TextCode.add(""); TextCode.add($lc + ":"); }
         block           { TextCode.add("br label \%" + $lb); TextCode.add(""); TextCode.add($next + ":"); }
-        { if (TRACEON) System.out.println("for_statement\t\t: 'for' '(' expression_statement expression ';' expression? ')' statement"); }
+        { if (TRACEON) System.out.println("for_statement\t\t: 'for' '(' expression_statement assignment_expression ';' assignment_expression? ')' statement"); }
     ;
 switch_statement
-    :   'switch' '(' expression ')' '{' (labeled_statement[$expression.theInfo.theType])* '}'
-        { if (TRACEON) System.out.println("switch_statement\t: switch ( expression ) { labeled_statement* }"); }
+    :   'switch' '(' assignment_expression ')' '{' (labeled_statement[$assignment_expression.theInfo.theType])* '}'
+        { if (TRACEON) System.out.println("switch_statement\t: switch ( assignment_expression ) { labeled_statement* }"); }
     ;
 labeled_statement
 [Type attr_type]
@@ -458,12 +457,12 @@ jump_statement
 		}
 	|   'continue' ';'          { if (TRACEON) System.out.println("jump_statement\t\t: continue;"); }
 	|   'break' ';'             { if (TRACEON) System.out.println("jump_statement\t\t: break;"); }
-	|   'return' expression ';'
+	|   'return' assignment_expression ';'
 		{
 			if (TRACEON) System.out.println("jump_statement\t\t: 'return' expression ';'");
-			if (top.get(place).theType != $expression.theInfo.theType) {
-				System.out.println("Error! " + $expression.start.getLine() + ": Return wrong type.");
-			} else { TextCode.add("ret " + $expression.theInfo.getType() + " " + $expression.theInfo.getValue()); }
+			if (top.get(place).theType != $assignment_expression.theInfo.theType) {
+				System.out.println("Error! " + $assignment_expression.start.getLine() + ": Return wrong type.");
+			} else { TextCode.add("ret " + $assignment_expression.theInfo.getType() + " " + $assignment_expression.theInfo.getValue()); }
 		}
 	|	'return' ';'
 		{
@@ -477,8 +476,17 @@ printf_statement
 returns [String call]
     :   'printf' '(' LITERAL
         {
-            String str = "[" + $LITERAL.text.length() + " x i8]";
-            TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c" + $LITERAL.text.substring(0, $LITERAL.text.length() - 1) + "\\0A\\00\"");
+            String var = $LITERAL.text.substring(1, $LITERAL.text.length() - 1);
+            int len = var.length();
+            for (int i = 1; i < var.length(); i++) {
+                if (var.charAt(i - 1) == '\\' && var.charAt(i) == 'n'){
+                    var = var.substring(0, i - 1) + "\\0A" + var.substring(i + 1, var.length());
+                    i++; len--;
+                }
+            }
+            var += "\\00";
+            String str = "[" + (len + 1) + " x i8]";
+            TextCode.add(strCount, "@.str." + Integer.toString(strCount) + " = private unnamed_addr constant " + str +" c\"" + var + "\"");
             $call = "\%t" + Integer.toString(varCount) + " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds (" + str + ", " + str + "* @.str." + Integer.toString(strCount) + ", i64 0, i64 0)";
             strCount++; varCount++;
         }
@@ -503,9 +511,10 @@ returns [String call]
     ;
 /* Expression */
 expression
-returns [Info theInfo]
-    :   a = assignment_expression       { $theInfo = $a.theInfo; } 
-		(',' b = assignment_expression  { $theInfo = $b.theInfo; } )*
+returns [List<Info> param]
+    :   { param = new ArrayList<Info>(); }
+        a = assignment_expression       { param.add($a.theInfo); } 
+		(',' b = assignment_expression  { param.add($b.theInfo); } )*
         { if (TRACEON) System.out.println("expression\t\t: assignment_expression (',' assignment_expression)*"); }
     ;
 assignment_expression
@@ -722,10 +731,10 @@ returns [Info theInfo]
 unary_expression
 returns [Info theInfo]
 @init { theInfo = new Info(); }
-    :   postfix_expression
+    :   primary_expression
         {   
-            if (TRACEON) System.out.println("unary_expression\t: postfix_expression");
-            $theInfo = $postfix_expression.theInfo;
+            if (TRACEON) System.out.println("unary_expression\t: primary_expression");
+            $theInfo = $primary_expression.theInfo;
         }
 	|   '++' a = unary_expression/////
         {   
@@ -786,39 +795,76 @@ returns [Info theInfo]
         }
 	;
 
-postfix_expression
-returns [Info theInfo]
-@init { theInfo = new Info(); }
-	:   primary_expression { $theInfo = $primary_expression.theInfo; }
-        (   (	'[' expression ']' ///
-			|   '(' ')'
-			|   '(' expression ')'
-			|   '++'    ///
-			|   '--'    ///
-			)
-		// |   ('.' | '->') ID
-        )* { if (TRACEON) System.out.println("postfix_expression\t: primary_expression (('[' expression ']' | '(' ')' | '(' expression ')' | '++' | '--')*"); }
-	;
+// postfix_expression
+// returns [Info theInfo]
+// @init { theInfo = new Info(); }
+// 	:   primary_expression { $theInfo = $primary_expression.theInfo; }
+//         (   (	'[' expression ']' ///
+// 			|   '(' ')'
+// 			|   '(' expression ')'
+// 			|   '++'    ///
+// 			|   '--'    ///
+// 			)
+// 		// |   ('.' | '->') ID
+//         )* { if (TRACEON) System.out.println("postfix_expression\t: primary_expression (('[' expression ']' | '(' ')' | '(' expression ')' | '++' | '--')*"); }
+// 	;
 
 primary_expression
 returns [Info theInfo]
+@init { theInfo = new Info(); }
     :   ID
         {
 			if (TRACEON) System.out.println("primary_expression\t: ID");
 			if (top.get($ID.text) == null) {
 				System.out.println("Error! " + $ID.getLine() + ": Undeclared identifier.");
-                $theInfo = new Info();
 			}  else {
 				$theInfo = load(top.get($ID.text));
 			}
 		}
+    |   ID '(' ')'
+        {
+			if (TRACEON) System.out.println("primary_expression\t: ID()");
+            Info call = top.get($ID.text);
+            List<Info> list = function.get($ID.text);
+            if (list.size() == 0) {
+                if (call.theType == Type.Void) {
+                    TextCode.add("call void " + call.getValue() + "()");
+                } else {
+                    $theInfo.set(call.theType, varCount++, "");
+                    TextCode.add($theInfo.getValue() + " = call " + $theInfo.getType() + " " + call.getValue() + "()");
+                }
+            }
+		}
+    |   ID '(' expression ')'
+        {
+			if (TRACEON) System.out.println("primary_expression\t: ID( expression )");
+            Info call = top.get($ID.text);
+            List<Info> list = function.get($ID.text);
+            if (list.size() == $expression.param.size()) {
+                boolean eq = true;
+                String value = "";
+                for (int i = 0; i < list.size(); i++) {
+                    if (list.get(i).theType != $expression.param.get(i).theType) eq = false;
+                    if (i > 0) value += ", ";
+                    value += $expression.param.get(i).getType() + " " + $expression.param.get(i).getValue();
+                }
+                if (eq) {
+                    if (call.theType == Type.Void) {
+                        TextCode.add("call void " + call.getValue() + "(" + value + ")");
+                    } else {
+                        $theInfo.set(call.theType, varCount++, "");
+                        TextCode.add($theInfo.getValue() + " = call " + $theInfo.getType() + " " + call.getValue() + "(" + value + ")");
+                    }
+                }
+            }
+        }
     |   constant
         {  
             if (TRACEON) System.out.println("primary_expression\t: constant");
             $theInfo = $constant.theInfo;
         }
-    |   '(' expression ')'
-        { if (TRACEON) System.out.println("primary_expression\t: '(' expression ')'"); 	$theInfo = $expression.theInfo; }
+    |   '(' assignment_expression ')'
+        { if (TRACEON) System.out.println("primary_expression\t: '(' expression ')'"); 	$theInfo = $assignment_expression.theInfo; }
     ;
 
 /* Definition */

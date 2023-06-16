@@ -5,17 +5,19 @@ int z(int a, int b) {
 }
 int main()
 {
-    int a = 0;
+    float a = 0.;
     int b = 1;
-    do {
-        a += 1;
-        printf("%d", a);
-    } while (a < 10)
+    // do {
+    //     a += 1.2;
+    // } while (a < 10.);
+    // printf("a = %f\n", a);
     
-    while (a > 0) {
-        a = a - 1;
-        printf("%d", a);
+    int c, d;
+    while (c < 10 && d < 10) {
+        z(c, 1);
+        z(d, 2);
     }
+    printf("%d %d\n", c, d);
 
     return 0;
 }
